@@ -1,0 +1,6 @@
+# PJ Encoder access list. One person per line:  username,password
+# Delete a line (or put # in front of it) to remove that person's access.
+# Usernames are not case-sensitive, passwords are.
+# To hide a password, use make_access_line.html and paste its result here instead.
+admin,sha256:8da193366e1554c08b2870c50f737b9587c3372b656151c4a96028af26f51334
+
