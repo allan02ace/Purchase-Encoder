@@ -570,9 +570,36 @@ const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 // ---------- import ----------
 function cv(c){let v=c&&c.value; if(v&&typeof v==='object'){if(v instanceof Date)return v; if('result' in v)return v.result; if(v.richText)return v.richText.map(t=>t.text).join(''); if(v.text)return v.text; return ''} return v==null?'':v}
 const txt=v=>v instanceof Date?'':String(v??'').trim();
+
+// ---------- journal headings: any column order, any extra columns ----------
+// Each heading is matched by its words (case, line breaks and the (...) hints do not matter). Order matters: the first test that fits wins.
+const FIELD_RX=[
+  ['branch',/branch/],['tin',/\btin\b|tax\s*id/],
+  ['docType',/document\s*type/],['docNo',/(document|invoice|receipt|reference)\s*(number|no\b|#)/],
+  ['cls',/classification/],['vat',/^vat\b|\bvat\s*\/\s*n|vat\s*or\s*nvat/],
+  ['last',/last\s*name|surname|family\s*name/],['first',/first\s*name|given\s*name/],['mid',/middle\s*(name|initial)/],
+  ['a2',/address\s*(line\s*)?2/],['a1',/address/],
+  ['part',/particulars|nature\s*of\s*(purchase|expense)/],
+  ['m1',/goods\s*other|other\s*than\s*capital|non[-\s]*capital/],['m0',/capital\s*goods/],['m2',/^services/],['m3',/^exempt/],['m4',/does\s*not\s*qualify|not\s*qualif|non[-\s]*qualif|disallowed/],
+  ['atc',/^atc\b|\batc\s*code/],
+  ['corp',/corporate|registered\s*name|trade\s*name|supplier|vendor|payee/]
+];
+const LEGACY_COLS={docType:3,cls:5,vat:6,tin:7,branch:8,corp:9,last:10,first:11,mid:12,a1:13,a2:14,part:15,m0:16,m1:17,m2:18,m3:19,m4:20,atc:24};
+function fieldOf(t){for(const [k,rx] of FIELD_RX)if(rx.test(t))return k;return null}
+function findHeader(ws){
+  let best=null; const last=Math.min(ws.rowCount,25);
+  for(let r=1;r<=last;r++){
+    const map={};
+    ws.getRow(r).eachCell((c,i)=>{const t=txt(cv(c)).toLowerCase().replace(/\s+/g,' ');if(!t||t.length>120)return;const k=fieldOf(t);if(k&&!(k in map))map[k]=i});
+    const n=Object.keys(map).length;
+    if(n>=4&&(map.tin||map.docNo)&&(map.corp||map.last||map.first)&&(!best||n>best.n))best={r,map,n};   // needs a name column too, so 2307 / payor lists are not mistaken for a journal
+  }
+  return best;
+}
+const numCell=v=>{const n=typeof v==='number'?v:parseFloat(String(v==null?'':v).replace(/[,\s\u20B1]/g,''));return isFinite(n)?n:0};
 async function readFiles(fl){
   const msg=$('learnmsg'); msg.className='hint'; msg.textContent='Reading…';
-  let sheets=0,rowsN=0,listN=0,errs=[]; cleanup={repairs:[],look:[]};
+  let sheets=0,rowsN=0,listN=0,errs=[],byName=0,byPos=0; cleanup={repairs:[],look:[]};
   for(const f of fl){
     try{
       const wb=new ExcelJS.Workbook(); await wb.xlsx.load(await f.arrayBuffer());
@@ -592,11 +619,17 @@ async function readFiles(fl){
           }
           sheets++;return;
         }
-        let h=0; for(let r=1;r<=15&&!h;r++){ if(/document\s*number/i.test(txt(cv(ws.getRow(r).getCell(4)))))h=r }
-        if(!h)return; sheets++;
+        // a purchases journal: find the header row and match each column by its heading, so the layout can vary
+        let H=findHeader(ws),h,colOf;
+        if(H){h=H.r;colOf=H.map;byName++}
+        else{ // no recognisable headings: fall back to the standard layout (Document Number in column D)
+          for(let r=1;r<=15&&!h;r++){ if(/document\s*number/i.test(txt(cv(ws.getRow(r).getCell(4)))))h=r }
+          if(!h)return; colOf={...LEGACY_COLS}; byPos++;
+        }
+        sheets++;
         for(let r=h+1;r<=ws.rowCount;r++){
-          const row=ws.getRow(r), g=c=>cv(row.getCell(c));
-          const rec={docType:txt(g(3)),cls:txt(g(5)),vat:txt(g(6)),tin:txt(g(7)),branch:txt(g(8)),corp:txt(g(9)),last:txt(g(10)),first:txt(g(11)),mid:txt(g(12)),a1:txt(g(13)),a2:txt(g(14)),part:txt(g(15)),atc:txt(g(24))};
+          const row=ws.getRow(r), g=k=>colOf[k]?cv(row.getCell(colOf[k])):'';
+          const rec={docType:txt(g('docType')),cls:txt(g('cls')),vat:txt(g('vat')),tin:txt(g('tin')),branch:txt(g('branch')),corp:txt(g('corp')),last:txt(g('last')),first:txt(g('first')),mid:txt(g('mid')),a1:txt(g('a1')),a2:txt(g('a2')),part:txt(g('part')),atc:txt(g('atc'))};
           if(!digits(rec.tin)&&!rec.corp&&!rec.last&&!rec.first&&!rec.mid&&!rec.vat&&!rec.cls)continue;
           const fx=repairRow(rec); const where=ws.name+' row '+r;
           if(fx)cleanup.repairs.push({where,...fx});
@@ -604,7 +637,7 @@ async function readFiles(fl){
           if(!supName(rec)){if(digits(rec.tin))cleanup.look.push({where,why:'TIN but no supplier name',tin:rec.tin});continue}
           if(digits(rec.tin).length>13){cleanup.look.push({where,why:'TIN has too many digits',tin:rec.tin,name:supName(rec)});continue}
           const nt=normTin(rec.tin); rec.tin=nt.tin; rec.branch=normBranch(rec.branch)||nt.branch||(rec.tin?'0000':'');
-          rec.cat=-1; for(let k=0;k<5;k++){const n=+g(16+k); if(n){rec.cat=k;break}}
+          rec.cat=-1; for(let k=0;k<5;k++){const n=numCell(g('m'+k)); if(n){rec.cat=k;break}}
           learn(rec); rowsN++;
         }
       });
@@ -612,8 +645,8 @@ async function readFiles(fl){
   }
   rowsRead+=rowsN; consolidate(); persist(); refreshStats();
   if(errs.length){msg.className='err';msg.textContent='Could not read: '+errs.join(', ')+'. Use an .xlsx file saved from Excel (not .xls or .csv).'}
-  else if(!sheets){msg.className='err';msg.textContent='No sheet with a "Document Number" header was found in that file.'}
-  else{msg.className='toast';msg.textContent=(listN?`Loaded ${listN} suppliers from your list. `:'')+(rowsN?`Read ${rowsN} rows from ${sheets} sheet${sheets>1?'s':''}. `:'')+`${suppliers.size} suppliers on file.`+(cleanup.repairs.length?` Fixed ${cleanup.repairs.length} misplaced row${cleanup.repairs.length>1?'s':''}.`:'')+(cleanup.look.length?` Skipped ${cleanup.look.length} row${cleanup.look.length>1?'s':''} with no name or a bad TIN.`:'')}
+  else if(!sheets){msg.className='err';msg.textContent='No journal sheet was found. The sheet needs a header row with headings such as Document Number, TIN, Corporate Name or Trade Name.'}
+  else{msg.className='toast';msg.textContent=(listN?`Loaded ${listN} suppliers from your list. `:'')+(rowsN?`Read ${rowsN} rows from ${sheets} sheet${sheets>1?'s':''}. `:'')+`${suppliers.size} suppliers on file.`+(cleanup.repairs.length?` Fixed ${cleanup.repairs.length} misplaced row${cleanup.repairs.length>1?'s':''}.`:'')+(cleanup.look.length?` Skipped ${cleanup.look.length} row${cleanup.look.length>1?'s':''} with no name or a bad TIN.`:'')+(byPos?` ${byPos} sheet${byPos>1?'s':''} had no recognisable headings and ${byPos>1?'were':'was'} read using the standard column layout.`:'')}
 }
 $('files').addEventListener('change',e=>{readFiles([...e.target.files]);e.target.value=''});
 const drop=$('drop');
