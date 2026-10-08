@@ -161,6 +161,11 @@ button.secondary:hover{border-color:var(--ink)}
 .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:12px}
 .tt{margin-left:auto}
 
+#encdlg{border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);padding:20px 22px;max-width:420px;width:calc(100% - 32px)}
+#encdlg::backdrop{background:rgba(0,0,0,.45)}
+#encdlg label{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:10px;padding:6px 0;font-size:14px;font-weight:600;color:var(--ink);text-align:left;white-space:normal}
+#encdlg label input[type=checkbox]{width:auto;flex:none;margin:0}
+#encdlg label .hint{font-weight:400;margin-left:auto}
 /* ---- login ---- */
 body.locked>main{display:none!important}
 #login{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;padding:20px;background:var(--bg)}
@@ -171,10 +176,12 @@ body.locked #login{display:flex}
 #login label{display:flex;flex-direction:column;gap:5px;margin-bottom:12px;font-size:13px;font-weight:600;color:var(--mute)}
 #login input{padding:9px 10px;background:var(--field);border:1px solid var(--line);border-radius:6px;font-size:15px}
 #login input:focus{outline:2px solid var(--focus);outline-offset:1px}
+#login input[type=file]{padding:7px;font-size:13px}
 #login button.primary{width:100%;padding:10px;font-size:15px;margin-top:4px}
 #loginerr{min-height:18px;margin:10px 0 0;font-size:13px;color:var(--bad)}
 </style></head><body class="locked">
-<div id="login" role="dialog" aria-modal="true" aria-labelledby="login-h"><form class="card" id="loginform" autocomplete="off"><h1 id="login-h"><img id="loginlogo" alt="PJ" width="44" height="44">PJ Encoder</h1><label>Username<input id="lu" autocapitalize="off" spellcheck="false" required></label><label>Password<input id="lp" type="password" required></label><button class="primary" id="lbtn" type="submit">Log in</button><p id="loginerr" role="alert"></p></form></div>
+<div id="login" role="dialog" aria-modal="true" aria-labelledby="login-h"><form class="card" id="loginform" autocomplete="off"><h1 id="login-h"><img id="loginlogo" alt="PJ" width="44" height="44">PJ Encoder</h1><label>Username<input id="lu" autocapitalize="off" spellcheck="false" required></label><label>Password<input id="lp" type="password" required></label><label id="accpick" hidden>Offline test: choose your access.txt<input id="accfile" type="file" accept=".txt,text/plain"></label><p class="hint" id="accstat" style="margin:-4px 0 10px" hidden></p>
+<button class="primary" id="lbtn" type="submit">Log in</button><p id="loginerr" role="alert"></p></form></div>
 <main>
   <div class="top">
     <div>
@@ -298,11 +305,12 @@ body.locked #login{display:flex}
       <div class="actions">
         <label style="flex-direction:row;align-items:center;gap:8px">Month (col. A)<select id="exmonth"><option value="0">Auto (from each date)</option><option value="1">January</option><option value="2">February</option><option value="3">March</option><option value="4">April</option><option value="5">May</option><option value="6">June</option><option value="7">July</option><option value="8">August</option><option value="9">September</option><option value="10">October</option><option value="11">November</option><option value="12">December</option></select></label>
         <label style="flex-direction:row;align-items:center;gap:8px">Sheet name<input id="sheetname" value="Purchases (Month)" style="width:190px"></label>
-        <button id="example" type="button" class="quiet">Load examples</button>
+        <button id="loadenc" type="button" class="quiet" title="Open a journal you already started, so you can carry on encoding and catch duplicates">Load encoded</button><input id="encfile" type="file" accept=".xlsx,.xlsm" hidden>
         <button id="wipe" type="button" class="quiet">Clear journal</button>
         <button id="export" type="button" class="secondary">Export to Excel</button>
       </div>
     </div>
+    <p class="hint" id="encmsg" role="status" style="margin:6px 0 0"></p>
     <div class="tools"><label>Search journal<input id="jq" type="search" placeholder="Supplier, document no., date, TIN, particulars…"></label></div>
     <div class="tablewrap">
       <table>
@@ -314,6 +322,7 @@ body.locked #login{display:flex}
     <p class="actions" style="margin:10px 0 0"><span class="toast" id="exmsg"></span><span class="err" id="exerr"></span></p>
   </section>
 </main>
+<dialog id="encdlg"><form method="dialog"><h3 style="margin:0 0 6px">Load which sheets?</h3><p class="hint" style="margin:0 0 10px">More than one journal sheet was found.</p><div id="enclist"></div><div class="actions" style="margin-top:14px;justify-content:flex-end"><button value="cancel">Cancel</button><button class="primary" value="ok">Load selected</button></div></form></dialog>
 
 <div id="snack" role="status" aria-live="polite"></div>
 <script>/*! ExcelJS 19-10-2023 */
@@ -589,6 +598,7 @@ const txt=v=>v instanceof Date?'':String(v??'').trim();
 // ---------- journal headings: any column order, any extra columns ----------
 // Each heading is matched by its words (case, line breaks and the (...) hints do not matter). Order matters: the first test that fits wins.
 const FIELD_RX=[
+  ['date',/^date\b/],['remarks',/^remarks?\b/],
   ['branch',/branch/],['tin',/\btin\b|tax\s*id/],
   ['docType',/document\s*type/],['docNo',/(document|invoice|receipt|reference)\s*(number|no\b|#)/],
   ['cls',/classification/],['vat',/^vat\b|\bvat\s*\/\s*n|vat\s*or\s*nvat/],
@@ -599,7 +609,7 @@ const FIELD_RX=[
   ['atc',/^atc\b|\batc\s*code/],
   ['corp',/corporate|registered\s*name|trade\s*name|supplier|vendor|payee/]
 ];
-const LEGACY_COLS={docType:3,cls:5,vat:6,tin:7,branch:8,corp:9,last:10,first:11,mid:12,a1:13,a2:14,part:15,m0:16,m1:17,m2:18,m3:19,m4:20,atc:24};
+const LEGACY_COLS={date:2,remarks:27,docNo:4,docType:3,cls:5,vat:6,tin:7,branch:8,corp:9,last:10,first:11,mid:12,a1:13,a2:14,part:15,m0:16,m1:17,m2:18,m3:19,m4:20,atc:24};
 function fieldOf(t){for(const [k,rx] of FIELD_RX)if(rx.test(t))return k;return null}
 function findHeader(ws){
   let best=null; const last=Math.min(ws.rowCount,25);
@@ -1035,12 +1045,70 @@ async function exportXlsx(){
 }
 $('export').onclick=exportXlsx;
 $('wipe').onclick=()=>{if($('wipe').dataset.arm){rows=[];persist();renderRows();$('wipe').textContent='Clear journal';delete $('wipe').dataset.arm}else{$('wipe').dataset.arm=1;$('wipe').textContent='Click again to clear all';setTimeout(()=>{$('wipe').textContent='Clear journal';delete $('wipe').dataset.arm},3000)}};
-$('example').onclick=()=>{
-  const ex=[
-    {date:'2026-10-02',docType:'INVOICE',docNo:'EX-0001',cls:'CORPORATE',vat:'VAT',tin:'000000001',branch:'0000',corp:'EXAMPLE OFFICE SUPPLIES INC',a1:'1 SAMPLE ST',a2:'MAKATI CITY',part:'OFFICE SUPPLIES',amts:['','10000','','',''],atc:'WC158',remarks:''},
-    {date:'2026-10-03',docType:'INVOICE',docNo:'EX-0002',cls:'INDIVIDUAL',vat:'NVAT',tin:'000000002',branch:'0000',last:'EXAMPLE',first:'JUAN',mid:'D',a1:'2 SAMPLE AVE',a2:'QUEZON CITY',part:'CONSULTING FEE',amts:['','','20000','',''],atc:'WI010',remarks:''}
-  ].filter(x=>atcMap.has(x.atc)||(x.atc=''));
-  ex.forEach(x=>{x.example=true;rows.push(x)});persist();renderRows();
+// ---------- Load encoded: bring a journal you already started into the encoded area ----------
+const excelDate=v=>{
+  if(v instanceof Date&&!isNaN(v))return v.toISOString().slice(0,10);
+  if(typeof v==='number'&&v>20000&&v<80000)return new Date(Date.UTC(1899,11,30)+Math.round(v)*864e5).toISOString().slice(0,10);
+  return parseDate(txt(v))||'';
+};
+async function readEncoded(file){
+  const wb=new ExcelJS.Workbook(); await wb.xlsx.load(await file.arrayBuffer());
+  const out=[];
+  wb.eachSheet(ws=>{
+    let H=findHeader(ws),h,colOf;
+    if(H){h=H.r;colOf=H.map}
+    else{for(let r=1;r<=15&&!h;r++){if(/document\s*number/i.test(txt(cv(ws.getRow(r).getCell(4)))))h=r} if(!h)return; colOf={...LEGACY_COLS}}
+    const list=[]; let skipped=0;
+    for(let r=h+1;r<=ws.rowCount;r++){
+      const row=ws.getRow(r), g=k=>colOf[k]?cv(row.getCell(colOf[k])):'';
+      const rec={docType:txt(g('docType')),docNo:txt(g('docNo')),cls:txt(g('cls')),vat:txt(g('vat')),tin:txt(g('tin')),branch:txt(g('branch')),corp:txt(g('corp')),last:txt(g('last')),first:txt(g('first')),mid:txt(g('mid')),a1:txt(g('a1')),a2:txt(g('a2')),part:txt(g('part')),atc:txt(g('atc')),remarks:txt(g('remarks'))};
+      const amts=[0,1,2,3,4].map(k=>numCell(g('m'+k)));
+      const any=Object.values(rec).some(Boolean)||amts.some(Boolean);
+      if(!any)continue;
+      if(!rec.docNo&&!amts.some(Boolean)){continue}                    // template or reference lines with nothing encoded
+      repairRow(rec);
+      for(const f of VF)rec[f]=cleanText(rec[f]);
+      for(const f of ['docNo','atc','remarks'])rec[f]=rec[f].toUpperCase();
+      if(!supName(rec)){skipped++;continue}
+      const nt=normTin(rec.tin); rec.tin=nt.tin; rec.branch=normBranch(rec.branch)||nt.branch||(rec.tin?'0000':'');
+      rec.date=excelDate(g('date')); rec.amts=amts.map(n=>n?String(n):'');
+      if(rec.atc&&!atcMap.has(rec.atc))rec.atc='';
+      list.push(rec);
+    }
+    if(list.length||skipped)out.push({name:ws.name,list,skipped});
+  });
+  return out;
+}
+const encKey=r=>resolve(supKey(r))+'|'+normDoc(r.docNo)+'|'+(r.date||'')+'|'+compute(r).net.toFixed(2);
+function askSheets(found){
+  return new Promise(res=>{
+    const dlg=$('encdlg'),box=$('enclist');
+    box.innerHTML=found.map((f,i)=>`<label><input type="checkbox" data-i="${i}" checked> ${esc(f.name)} <span class="hint">(${f.list.length} rows)</span></label>`).join('');
+    dlg.onclose=()=>res(dlg.returnValue==='ok'?[...box.querySelectorAll('input:checked')].map(x=>found[+x.dataset.i]):null);
+    dlg.showModal();
+  });
+}
+$('loadenc').onclick=()=>{$('encfile').value='';$('encfile').click()};
+$('encfile').onchange=async e=>{
+  const f=e.target.files[0]; if(!f)return;
+  const msg=$('encmsg'); msg.className='hint'; msg.textContent='Reading '+f.name+'…';
+  try{
+    let found=(await readEncoded(f)).filter(x=>x.list.length);
+    if(!found.length){msg.className='err';msg.textContent='No encoded rows were found. The sheet needs a header row with headings such as Document Number, TIN and Corporate Name or Trade Name.';return}
+    if(found.length>1){found=await askSheets(found); if(!found||!found.length){msg.textContent='';return}}
+    const have=new Map(); rows.forEach(r=>{const k=encKey(r);have.set(k,(have.get(k)||0)+1)});
+    let added=0,already=0;
+    for(const sh of found)for(const r of sh.list){
+      const k=encKey(r),n=have.get(k)||0;
+      if(n>0){have.set(k,n-1);already++;continue}
+      rows.push(r);added++;
+      const lr={...r,cat:-1};for(let k=0;k<5;k++){if(numCell(r.amts[k])){lr.cat=k;break}} learn(lr);   // new suppliers become searchable
+    }
+    const lastD=rows.map(r=>r.date).filter(Boolean).sort().pop(); if(lastD)lastDate=lastD;
+    persist();refreshStats();renderRows();calc();
+    msg.className='toast';
+    msg.textContent=`Loaded ${added} row${added===1?'':'s'} from ${found.map(x=>x.name).join(', ')}.`+(already?` ${already} already in the journal, so skipped.`:'')+' New entries are now checked against these for duplicates.';
+  }catch(err){msg.className='err';msg.textContent='Could not read that file ('+(err&&err.message||err)+').'}
 };
 // Tab rules.
 // Old supplier found: jump order = supplier, date, document type, document number, nature, the suggested amount box, ATC, remarks, Add.
@@ -1086,16 +1154,21 @@ const ACCESS_URL='access.txt';
   const logo=document.querySelector('h1.brand img');if(logo)$('loginlogo').src=logo.src;
   const sha=async t=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(t)))].map(b=>b.toString(16).padStart(2,'0')).join('');
   const keyOf=(u,pw)=>sha(u.trim().toLowerCase()+':'+pw);
-  async function loadList(){
-    const r=await fetch(ACCESS_URL+(ACCESS_URL.includes('?')?'&':'?')+'t='+Date.now(),{cache:'no-store'});
-    if(!r.ok)throw new Error('HTTP '+r.status);
+  const FILE_MODE=location.protocol==='file:';   // opened from a folder: browsers block reading access.txt, so it is picked by hand
+  const parseAccess=text=>{
     const out=[];
-    for(let line of (await r.text()).replace(/^\uFEFF/,'').split(/\r?\n/)){
+    for(let line of String(text).replace(/^\uFEFF/,'').split(/\r?\n/)){
       line=line.trim();if(!line||line[0]==='#')continue;
       const i=line.indexOf(',');if(i<1)continue;
       out.push({u:line.slice(0,i).trim().toLowerCase(),p:line.slice(i+1).trim()});
     }
     return out;
+  };
+  async function loadList(){
+    if(FILE_MODE){const t=sessionStorage.getItem('pj-acc-text');if(t==null)throw new Error('no access.txt chosen');return parseAccess(t)}
+    const r=await fetch(ACCESS_URL+(ACCESS_URL.includes('?')?'&':'?')+'t='+Date.now(),{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    return parseAccess(await r.text());
   }
   // true when the list still contains this user with the password that produced key k
   async function valid(list,u,k){
@@ -1108,7 +1181,13 @@ const ACCESS_URL='access.txt';
   }
   const lock=msg=>{document.body.classList.add('locked');$('loginerr').textContent=msg||'';$('lp').value='';setTimeout(()=>{($('lu').value?$('lp'):$('lu')).focus()},0)};
   const unlock=()=>{document.body.classList.remove('locked');$('loginerr').textContent='';$('lp').value=''};
-  const netMsg='Cannot reach the access list. Check your internet connection and try again.';
+  const netMsg=FILE_MODE?'Choose your access.txt file first (offline test).':'Cannot reach the access list. Check your internet connection and try again.';
+  if(FILE_MODE){
+    $('accpick').hidden=false;$('accstat').hidden=false;
+    const stat=()=>{const t=sessionStorage.getItem('pj-acc-text');$('accstat').textContent=t==null?'No access.txt chosen yet.':'access.txt loaded ('+parseAccess(t).length+' login'+(parseAccess(t).length===1?'':'s')+').'};
+    stat();
+    $('accfile').addEventListener('change',async e=>{const f=e.target.files[0];if(!f)return;sessionStorage.setItem('pj-acc-text',await f.text());stat();$('loginerr').textContent='';$('lu').focus()});
+  }
 
   $('loginform').addEventListener('submit',async e=>{
     e.preventDefault();const u=$('lu').value.trim(),pw=$('lp').value;if(!u||!pw)return;
@@ -1120,7 +1199,7 @@ const ACCESS_URL='access.txt';
     }catch(err){$('loginerr').textContent=netMsg}
     $('lbtn').disabled=false;
   });
-  $('logout').addEventListener('click',()=>{sessionStorage.removeItem(SK);lock('')});
+  $('logout').addEventListener('click',()=>{sessionStorage.removeItem(SK);if(FILE_MODE){sessionStorage.removeItem('pj-acc-text');$('accfile').value='';$('accstat').textContent='No access.txt chosen yet.'}lock('')});
 
   // keep the session honest: re-read the access list at page load and every 5 minutes
   async function recheck(initial){
