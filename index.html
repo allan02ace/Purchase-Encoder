@@ -179,6 +179,16 @@ body.locked #login{display:flex}
 #login input[type=file]{padding:7px;font-size:13px}
 #login button.primary{width:100%;padding:10px;font-size:15px;margin-top:4px}
 #loginerr{min-height:18px;margin:10px 0 0;font-size:13px;color:var(--bad)}
+/* ---- guided tour (spotlight) ---- */
+#tutorial-overlay[hidden],#tutorial-tip[hidden]{display:none}
+#tutorial-overlay{position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.68)}
+.tutorial-target{position:relative!important;z-index:10001!important;background:var(--panel);outline:3px solid var(--acc)!important;outline-offset:5px;border-radius:8px;box-shadow:0 0 0 8px color-mix(in srgb,var(--acc) 25%,transparent)}
+#tutorial-tip{position:fixed;z-index:10002;width:min(360px,calc(100vw - 32px));padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);box-shadow:0 12px 40px rgba(0,0,0,.4)}
+#tutorial-tip h3{margin:0 0 6px;font-size:16px}
+#tutorial-tip p{margin:0 0 14px;color:var(--mute);font-size:14px}
+#tutorial-tip .tutorial-actions{display:flex;justify-content:space-between;align-items:center;gap:8px}
+#tutorial-tip .tutorial-nav{display:flex;gap:8px}
+#tutorial-tip .tutorial-count{color:var(--mute);font-size:12px}
 </style></head><body class="locked">
 <div id="login" role="dialog" aria-modal="true" aria-labelledby="login-h"><form class="card" id="loginform" autocomplete="off"><h1 id="login-h"><img id="loginlogo" alt="PJ" width="44" height="44">PJ Encoder</h1><label>Username<input id="lu" autocapitalize="off" spellcheck="false" required></label><label>Password<input id="lp" type="password" required></label><label id="accpick" hidden>Offline test: choose your access.txt<input id="accfile" type="file" accept=".txt,text/plain"></label><p class="hint" id="accstat" style="margin:-4px 0 10px" hidden></p>
 <button class="primary" id="lbtn" type="submit">Log in</button><p id="loginerr" role="alert"></p></form></div>
@@ -191,6 +201,7 @@ body.locked #login{display:flex}
       <label style="width:210px">Company name<input id="company" autocomplete="off"></label>
       <label style="width:150px">Company TIN<input id="ctin" autocomplete="off"></label>
       <button id="tampbtn" type="button" class="quiet tamp-on" title="Top Withholding Agent — toggle to change ATC options and EWT requirement">TAMP: ON</button>
+      <button id="tourbtn" type="button" class="quiet" title="Take the guided tour">Tutorial</button>
       <button id="theme" type="button" class="quiet" aria-label="Switch theme">Theme</button>
       <button id="logout" type="button" class="quiet">Log out</button>
     </div>
@@ -324,6 +335,19 @@ body.locked #login{display:flex}
 </main>
 <dialog id="encdlg"><form method="dialog"><h3 style="margin:0 0 6px">Load which sheets?</h3><p class="hint" style="margin:0 0 10px">More than one journal sheet was found.</p><div id="enclist"></div><div class="actions" style="margin-top:14px;justify-content:flex-end"><button value="cancel">Cancel</button><button class="primary" value="ok">Load selected</button></div></form></dialog>
 
+<div id="tutorial-overlay" hidden></div>
+<section id="tutorial-tip" role="dialog" aria-modal="true" aria-labelledby="tutorial-title" aria-describedby="tutorial-text" hidden>
+  <h3 id="tutorial-title"></h3>
+  <p id="tutorial-text"></p>
+  <div class="tutorial-actions">
+    <button type="button" class="quiet" id="tutorial-skip">Skip</button>
+    <span class="tutorial-count" id="tutorial-count"></span>
+    <div class="tutorial-nav">
+      <button type="button" id="tutorial-prev">Back</button>
+      <button type="button" class="primary" id="tutorial-next">Next</button>
+    </div>
+  </div>
+</section>
 <div id="snack" role="status" aria-live="polite"></div>
 <script>/*! ExcelJS 19-10-2023 */
 
@@ -417,7 +441,7 @@ function init(){
   const m=load('pj-meta')||{}; $('company').value=m.company||''; $('ctin').value=m.ctin||''; if(m.sheet)$('sheetname').value=m.sheet; setTamp(m.tamp!==false);
   const t=load('pj-theme'); if(t) document.documentElement.dataset.theme=t;
 }
-function persist(){save('pj-sup',[...suppliers]);save('pj-redir',redir);save('pj-rows',rows);save('pj-meta',{company:$('company').value,ctin:$('ctin').value,sheet:$('sheetname').value,tamp})}
+function persist(){save('pj-sup',[...suppliers]);save('pj-redir',redir);save('pj-rows',rows);save('pj-opts',opts);save('pj-meta',{company:$('company').value,ctin:$('ctin').value,sheet:$('sheetname').value,tamp})}
 ['company','ctin','sheetname'].forEach(i=>$(i).addEventListener('input',persist));
 function setTamp(on){
   tamp=on;
@@ -482,6 +506,7 @@ function recompute(s){
   s.atc=topOf(s.atcs)?.[0]||''; s.cat=topOf(s.cats)?+topOf(s.cats)[0]:2;
 }
 function learn(rec,o){
+  noteOpt('docType',rec.docType,false);noteOpt('part',rec.part,false);
   {const v=normVat(rec.vat),c=normCls(rec.cls);if(v)rec.vat=v;if(c)rec.cls=c}
   const w=(o&&o.w)||1, nn=(o&&o.n)||1;
   let key=supKey(rec); if(!key||key==='n:')return;
@@ -738,24 +763,61 @@ $('atc').addEventListener('keydown',e=>{
 
 // dropdowns for Document type, Classification, VAT / NVAT and Nature: Enter (or Tab on the strict ones) takes the highlighted item, which starts on the first match
 const NATURE=['COMMUNICATION LIGHTS AND WATER','FUEL AND OIL','OFFICE SUPPLIES','OTHER SERVICES','PROFESSIONAL FEE','REPAIRS AND MAINTENANCE MATERIALS','REPAIRS AND MAINTENANCE LABOR','REPRESENTATION AND ENTERTAINMENT','TRANSPORTATION AND TRAVEL','SECURITY SERVICES','ROYALTY FEE','FREIGHT AND HANDLING','ADVERTISING AND PROMOTION','MISCELLANEOUS','PURCHASES','DIRECT MATERIALS'];
-function dropdown(id,listId,getOpts,tab){
-  const el=$(id);
+// ---------- learned dropdown choices: document type and nature of purchase ----------
+// Every entry you add teaches these lists. Values from imported workbooks are offered once they have been seen twice (keeps typos out).
+const BUILTIN_OPTS={docType:['INVOICE','OFFICIAL RECEIPT'],part:NATURE};
+let opts=load('pj-opts');
+if(!opts||typeof opts!=='object')opts={};
+for(const f of ['docType','part'])if(!opts[f]||typeof opts[f]!=='object')opts[f]={};
+opts.gone=opts.gone||{};for(const f of ['docType','part'])if(!Array.isArray(opts.gone[f]))opts.gone[f]=[];
+const optKey=v=>String(v==null?'':v).replace(/\s+/g,' ').trim().toUpperCase();
+const optVisible=(f,k)=>{const o=opts[f][k];return !!o&&(o.e>0||o.n>=2)};
+// returns true when this value has just become a new choice in the dropdown
+function noteOpt(f,val,explicit){
+  const k=optKey(val); if(k.length<2||k.length>80)return false;
+  const g=opts.gone[f];
+  if(explicit){const i=g.indexOf(k);if(i>=0)g.splice(i,1)}else if(g.includes(k))return false;
+  const was=optVisible(f,k),o=opts[f][k]||(opts[f][k]={n:0,e:0});
+  o.n++;if(explicit)o.e++;
+  return !was&&optVisible(f,k)&&!BUILTIN_OPTS[f].includes(k);
+}
+function optList(f){
+  const L=Object.entries(opts[f]).filter(([k])=>optVisible(f,k)).sort((a,b)=>b[1].n-a[1].n||a[0].localeCompare(b[0])).map(([k])=>k);
+  return [...new Set([...L,...BUILTIN_OPTS[f]])];
+}
+function forgetOpt(f,k){delete opts[f][k];if(!opts.gone[f].includes(k))opts.gone[f].push(k);persist()}
+// first run of this version: learn from the journal and suppliers already stored
+function seedOpts(){
+  if(opts.seeded)return;
+  for(const r of rows){noteOpt('docType',r.docType,true);noteOpt('part',r.part,true)}
+  for(const s of suppliers.values())for(const f of ['docType','part'])for(const [k,c] of Object.entries((s.v&&s.v[f])||{})){const kk=optKey(k);if(kk.length<2||kk.length>80||opts.gone[f].includes(kk))continue;(opts[f][kk]=opts[f][kk]||{n:0,e:0}).n+=c}
+  opts.seeded=true;persist();
+}
+function dropdown(id,listId,getOpts,tab,f){
+  const el=$(id);let armed='';
   combo(el,$(listId),q=>{
     const ql=q.toLowerCase(),o=getOpts();
     const hit=!q?o:[...o.filter(x=>x.toLowerCase().startsWith(ql)),...o.filter(x=>!x.toLowerCase().startsWith(ql)&&x.toLowerCase().includes(ql))];
-    return hit.map(x=>({val:x,html:esc(x)}));
-  },it=>{el.value=it.val;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))},false,null,true);
+    const items=hit.map((x,i)=>f&&!BUILTIN_OPTS[f].includes(x)
+      ?{val:x,cls:'sup',html:`<span class="optv">${esc(x)}</span><span class="del${armed===x?' arm':''}" data-del="${i}" title="Take this out of the list">${armed===x?'Click again':'Remove'}</span>`}
+      :{val:x,html:`<span class="optv">${esc(x)}</span>`});
+    // typed something that is not in the list: offer it as a new choice (it is remembered when the entry is added)
+    if(f&&q.length>=2&&!o.some(x=>x.toLowerCase()===ql))items.push({val:optKey(q),html:`<span class="optv">${esc(optKey(q))}</span><small>Use as a new choice. It is remembered when you add the entry.</small>`});
+    return items;
+  },it=>{el.value=it.val;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))},false,
+  it=>{if(!f)return;if(armed===it.val){forgetOpt(f,it.val);armed=''}else armed=it.val},true);
   // strict fields: Tab accepts the highlighted option and carries on to the next field
   if(tab)el.addEventListener('keydown',e=>{
     if(e.key!=='Tab'||e.shiftKey||!el.value.trim())return;
     const lst=$(listId),on=!lst.hidden&&lst.querySelector('div.on[data-i]');
-    if(on&&on.textContent!==el.value){el.value=on.textContent;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))}
+    const ov=on&&(on.querySelector('.optv')||on).textContent;
+    if(on&&ov!==el.value){el.value=ov;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))}
   });
 }
-dropdown('docType','dtlist',()=>[...new Set(['INVOICE','OFFICIAL RECEIPT',...[...suppliers.values()].map(s=>s.docType)].filter(Boolean))],true);
+dropdown('docType','dtlist',()=>optList('docType'),true,'docType');
 dropdown('cls','clslist',()=>['INDIVIDUAL','CORPORATE'],true);
 dropdown('vat','vatlist',()=>['VAT','NVAT'],true);
-dropdown('part','partlist',()=>NATURE,true);
+dropdown('part','partlist',()=>optList('part'),true,'part');
 
 const F=['docType','docNo','cls','vat','tin','branch','corp','last','first','mid','a1','a2','part','atc','remarks'];
 function applySupplier(s,k){
@@ -938,9 +1000,9 @@ function checkAtc(r){
 $('cls').addEventListener('input',()=>calc());$('cls').addEventListener('change',()=>calc());
 // ---------- confirmation ----------
 let snackT;
-function snack(title,sub){
+function snack(title,sub,extra){
   const s=$('snack');
-  s.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="#7fd6a0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M7.5 12.5l3 3 6-6.5"/></svg><div><b>'+esc(title)+'</b><span>'+esc(sub)+'</span></div>';
+  s.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="#7fd6a0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M7.5 12.5l3 3 6-6.5"/></svg><div><b>'+esc(title)+'</b><span>'+esc(sub)+'</span>'+(extra?'<span style="color:#7fd6a0">'+esc(extra)+'</span>':'')+'</div>';
   s.classList.add('show');clearTimeout(snackT);snackT=setTimeout(()=>s.classList.remove('show'),2800);
 }
 $('f').addEventListener('submit',e=>{
@@ -964,10 +1026,12 @@ $('f').addEventListener('submit',e=>{
   if(di>=0&&dupArmed!==dupSig(r)){dupArmed=dupSig(r);err.textContent='Duplicate? Click the button again to add it anyway.';$('dupmsg').textContent=dupText(rows[di]);return}
   const wasEdit=editing>=0,tot=amtVals(r).reduce((x,y)=>x+y,0);
   if(editing>=0)rows[editing]=r;else rows.push(r);lastDate=r.date;
-  learnEntry(r); picked=null; consolidate(); refreshStats(); persist();
+  learnEntry(r);
+  const newOpts=[noteOpt('docType',r.docType,true)&&'document type "'+r.docType+'"',noteOpt('part',r.part,true)&&'nature "'+r.part+'"'].filter(Boolean);
+  picked=null; consolidate(); refreshStats(); persist();
   if(jq&&!rowMatches(r)){jq='';$('jq').value=''}
   hlRow=r; renderRows(); resetForm(true); $('q').focus();
-  snack(wasEdit?'Transaction Updated':'Transaction Added',['Entry '+(rows.indexOf(r)+1),r.docNo||'No document no.',supName(r),money(tot)].join(' · '));
+  snack(wasEdit?'Transaction Updated':'Transaction Added',['Entry '+(rows.indexOf(r)+1),r.docNo||'No document no.',supName(r),money(tot)].join(' · '),newOpts.length?'Learned new '+newOpts.join(' and ')+' for the dropdown':'');
 });
 
 // ---------- export ----------
@@ -1138,7 +1202,7 @@ $('q').addEventListener('keydown',e=>{
   if(/^[\d\s-]+$/.test(v)&&digits(v).length>=9){if(!$('tin').value)$('tin').value=v}else $('corp').value=v;
 });
 $('clear').tabIndex=30;
-init();
+init();seedOpts();
 refreshStats();toggleNames();renderRows();calc();
 </script>
 
@@ -1212,6 +1276,139 @@ const ACCESS_URL='access.txt';
   }
   recheck(true);setInterval(()=>recheck(false),5*60*1000);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!document.body.classList.contains('locked'))recheck(false)});
+})();
+</script>
+<script>
+// Guided tour: spotlights each part of the page in turn. Opens by itself the first time someone logs in, and from the Tutorial button.
+(() => {
+  const steps = [
+    { title: "Welcome to PJ Encoder",
+      text: "This short tour shows the main steps for preparing a purchase journal. Use Next and Back or the arrow keys, and Esc to leave." },
+    { selector: "#h-prev", box: ".panel", title: "Earlier months",
+      text: "Load previous PJ workbooks to learn supplier details and help spot duplicate transactions." },
+    { selector: "#h-entry", title: "New entry",
+      text: "Enter the document, supplier, transaction amounts, and withholding tax details here." },
+    { selector: "#g-doc", box: ".grp", title: "Document details",
+      text: "Find or enter a supplier, then provide the document date, type, and number." },
+    { selector: "#g-tx", box: ".grp", title: "Transaction",
+      text: "Describe the purchase and enter its amounts in the appropriate categories." },
+    { selector: "#g-tax", box: ".grp", title: "Tax",
+      text: "Choose an ATC code to see the withholding rate and calculated EWT." },
+    { selector: "#g-res", box: ".grp", title: "Result",
+      text: "Review the calculated net amount, input VAT, invoice total, and EWT before adding the transaction." },
+    { selector: "#h-j", box: ".panel", title: "Journal",
+      text: "Review, search, sort, load, clear, or export your encoded transactions." }
+  ];
+
+  const $ = id => document.getElementById(id);
+  const overlay = $("tutorial-overlay"), tip = $("tutorial-tip"), title = $("tutorial-title"),
+        text = $("tutorial-text"), count = $("tutorial-count"),
+        prev = $("tutorial-prev"), next = $("tutorial-next"), skip = $("tutorial-skip");
+  const SEEN = "pj-tutorial-seen";
+  let current = 0, target = null, isOpen = false, returnFocus = null;
+
+  const locked = () => document.body.classList.contains("locked");
+  const seen = () => { try { return !!localStorage.getItem(SEEN); } catch (e) { return true; } };
+  const markSeen = () => { try { localStorage.setItem(SEEN, "1"); } catch (e) {} };
+  const reduceMotion = () => window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // null = a step with no spotlight (welcome); undefined = the part is missing or hidden, so skip the step
+  function resolve(step) {
+    if (!step.selector) return null;
+    const el = document.querySelector(step.selector);
+    if (!el || !el.getClientRects().length) return undefined;
+    const box = step.box && el.closest(step.box);
+    // spotlight the whole group when it fits on screen, otherwise just its heading
+    return box && box.getBoundingClientRect().height <= innerHeight * 0.75 ? box : el;
+  }
+
+  function position() {
+    if (!isOpen) return;
+    const margin = 16, t = tip.getBoundingClientRect();
+    let left, top;
+    if (!target) {
+      left = (innerWidth - t.width) / 2; top = (innerHeight - t.height) / 2;
+    } else {
+      const r = target.getBoundingClientRect();
+      left = Math.min(Math.max(margin, r.left), innerWidth - t.width - margin);
+      top = r.bottom + 18;
+      if (top + t.height > innerHeight - margin) top = r.top - t.height - 18;
+    }
+    top = Math.max(margin, Math.min(top, innerHeight - t.height - margin));
+    left = Math.max(margin, left);
+    tip.style.left = left + "px"; tip.style.top = top + "px";
+  }
+
+  function clearTarget() { if (target) target.classList.remove("tutorial-target"); target = null; }
+
+  function showStep(i, dir = 1) {
+    clearTarget();
+    while (i >= 0 && i < steps.length) {
+      const t = resolve(steps[i]);
+      if (t !== undefined) {
+        current = i; target = t;
+        overlay.hidden = false; tip.hidden = false;
+        title.textContent = steps[i].title; text.textContent = steps[i].text;
+        count.textContent = (i + 1) + " of " + steps.length;
+        prev.disabled = i === 0;
+        next.textContent = i === steps.length - 1 ? "Finish" : "Next";
+        if (t) { t.classList.add("tutorial-target"); t.scrollIntoView({ behavior: reduceMotion() ? "auto" : "smooth", block: "center" }); }
+        next.focus({ preventScroll: true });
+        requestAnimationFrame(position); setTimeout(position, 400);
+        return;
+      }
+      i += dir;
+    }
+    if (dir < 0) showStep(0, 1); else close(true);
+  }
+
+  function open() {
+    if (locked() || isOpen) return;
+    returnFocus = document.activeElement;
+    isOpen = true;
+    document.addEventListener("keydown", onKey, true);
+    showStep(0);
+  }
+
+  function close(mark = true) {
+    if (!isOpen) return;
+    isOpen = false;
+    clearTarget();
+    overlay.hidden = true; tip.hidden = true;
+    document.removeEventListener("keydown", onKey, true);
+    if (mark) markSeen();
+    if (returnFocus && returnFocus !== document.body && document.contains(returnFocus)) returnFocus.focus({ preventScroll: true });
+  }
+
+  function onKey(e) {
+    if (!isOpen) return;
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return; }
+    if (e.key === "Tab") {                       // keep keyboard focus inside the tour card
+      const f = [...tip.querySelectorAll("button:not([disabled])")], a = document.activeElement;
+      if (!tip.contains(a)) { e.preventDefault(); f[0].focus(); }
+      else if (e.shiftKey && a === f[0]) { e.preventDefault(); f[f.length - 1].focus(); }
+      else if (!e.shiftKey && a === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
+      return;
+    }
+    const a = document.activeElement;
+    if (a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable)) return;   // never steal arrow keys while typing
+    if (e.key === "ArrowRight") { e.preventDefault(); next.click(); }
+    if (e.key === "ArrowLeft" && current > 0) { e.preventDefault(); prev.click(); }
+  }
+
+  prev.addEventListener("click", () => showStep(current - 1, -1));
+  next.addEventListener("click", () => { if (current === steps.length - 1) close(); else showStep(current + 1); });
+  skip.addEventListener("click", () => close());
+  window.addEventListener("resize", position);
+  window.addEventListener("scroll", position, true);
+  $("tourbtn").addEventListener("click", open);
+  window.startTutorial = open;
+
+  // first login: start once; if the session locks while the tour is open, close it quietly
+  const auto = () => { if (!locked() && !seen() && !isOpen) open(); };
+  new MutationObserver(() => { if (locked()) close(false); else auto(); })
+    .observe(document.body, { attributes: true, attributeFilter: ["class"] });
+  auto();
 })();
 </script>
 </body></html>
