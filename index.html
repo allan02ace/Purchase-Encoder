@@ -762,7 +762,7 @@ $('atc').addEventListener('keydown',e=>{
 });
 
 // dropdowns for Document type, Classification, VAT / NVAT and Nature: Enter (or Tab on the strict ones) takes the highlighted item, which starts on the first match
-const NATURE=['COMMUNICATION LIGHTS AND WATER','FUEL AND OIL','OFFICE SUPPLIES','OTHER SERVICES','PROFESSIONAL FEE','REPAIRS AND MAINTENANCE MATERIALS','REPAIRS AND MAINTENANCE LABOR','REPRESENTATION AND ENTERTAINMENT','TRANSPORTATION AND TRAVEL','SECURITY SERVICES','ROYALTY FEE','FREIGHT AND HANDLING','ADVERTISING AND PROMOTION','MISCELLANEOUS','PURCHASES','DIRECT MATERIALS'];
+const NATURE=['COMMUNICATION LIGHTS AND WATER','FUEL AND OIL','OFFICE SUPPLIES','OFFICE EQUIPMENT','OTHER SERVICES','PROFESSIONAL FEE','REPAIRS AND MAINTENANCE MATERIALS','REPAIRS AND MAINTENANCE LABOR','REPRESENTATION AND ENTERTAINMENT','TRANSPORTATION AND TRAVEL','SECURITY SERVICES','ROYALTY FEE','FREIGHT AND HANDLING','ADVERTISING AND PROMOTION','MISCELLANEOUS','PURCHASES','DIRECT MATERIALS'];
 // ---------- learned dropdown choices: document type and nature of purchase ----------
 // Every entry you add teaches these lists. Values from imported workbooks are offered once they have been seen twice (keeps typos out).
 const BUILTIN_OPTS={docType:['INVOICE','OFFICIAL RECEIPT'],part:NATURE};
@@ -824,7 +824,7 @@ function applySupplier(s,k){
   if(!s)return; picked=k?{key:k}:null;
   for(const f of ['docType','cls','vat','tin','branch','corp','last','first','mid','a1','a2','part','atc'])$(f).value=PLAIN.includes(f)?cleanText(s[f]||''):(s[f]||'');
   if(!tamp&&$('atc').value&&!TAMP_OFF_ATC.has($('atc').value.toUpperCase()))$('atc').value='';
-  setUsual(/nvat/i.test(s.vat||'')?3:(s.cat??2));
+  {const nc=natureBox();setUsual(noInvoice($('docType').value)?4:/nvat/i.test(s.vat||'')?3:(nc!==null?nc:(s.cat??2)));}   // no INVOICE -> E, then NVAT, then nature, then learned box
   $('q').value=supName(s); checkCV(true); toggleNames(); calc();
   setSub(true);
   detailsTouched=false;syncTabs();$('date').focus();
@@ -861,7 +861,7 @@ function checkCV(fromSupplier){
   return msgs.length===0;
 }
 ['cls','vat'].forEach(id=>{$(id).addEventListener('blur',()=>checkCV(false));$(id).addEventListener('change',()=>checkCV(false));$(id).addEventListener('input',()=>$(id).classList.remove('bad-in'))});
-$('vat').addEventListener('change',()=>{if($('vat').value==='NVAT'&&['m0','m1','m2','m3','m4'].every(id=>!+$(id).value))setUsual(3);});
+$('vat').addEventListener('change',()=>{if(['m0','m1','m2','m3','m4'].every(id=>!+$(id).value))natureToBox();});
 // supplier details fold away once a known, complete supplier is picked; they open for new suppliers and problems
 function subSummary(){
   const n=supName({corp:$('corp').value,last:$('last').value,first:$('first').value,mid:$('mid').value}),t=digits($('tin').value);
@@ -1177,8 +1177,22 @@ $('encfile').onchange=async e=>{
 // Tab rules.
 // Old supplier found: jump order = supplier, date, document type, document number, nature, the suggested amount box, ATC, remarks, Add.
 // No supplier found (new supplier): normal order, document number -> classification -> VAT -> TIN ... -> address -> nature -> amount -> ATC -> remarks -> Add.
-// In both, the other amount boxes are skipped by Tab. Click one, or press Alt+1 to Alt+5 for A to E.
+// Old supplier: the other amount boxes are skipped by Tab. Click one, or press Alt+1 to Alt+5 for A to E.
+// New supplier (nothing known about which box to use): all five boxes A to E stay in the Tab order, and Tab from the nature field lands on the box that nature belongs to.
 let usualK=2, known=false, detailsTouched=false;
+// Which amount box (0=A Capital goods, 1=B Goods, 2=C Services, 3=D Exempt, 4=E Does not qualify) a nature of purchase normally belongs in.
+const NAT_CAT={'COMMUNICATION LIGHTS AND WATER':2,'FUEL AND OIL':1,'OFFICE SUPPLIES':1,'OFFICE EQUIPMENT':0,'OTHER SERVICES':2,'PROFESSIONAL FEE':2,'REPAIRS AND MAINTENANCE MATERIALS':1,'REPAIRS AND MAINTENANCE LABOR':2,'REPRESENTATION AND ENTERTAINMENT':2,'TRANSPORTATION AND TRAVEL':2,'SECURITY SERVICES':2,'ROYALTY FEE':2,'FREIGHT AND HANDLING':2,'ADVERTISING AND PROMOTION':2,'PURCHASES':1,'DIRECT MATERIALS':1};
+function natCat(t){
+  t=optKey(t); if(!t)return null;
+  if(Object.prototype.hasOwnProperty.call(NAT_CAT,t))return NAT_CAT[t];
+  if(/DOES NOT QUALIFY|NOT QUALIF|NON[- ]?QUALIF|DISALLOW|\bDNQ\b/.test(t))return 4;
+  if(/\bEXEMPT/.test(t))return 3;
+  if(/SERVICE|\bFEES?\b|LABOR|\bRENT(AL)?\b|COMMISSION|INSURANCE|SUBSCRIPTION|LICENSE|TRAVEL|FREIGHT|REPRESENTATION|ADVERTIS|UTILIT|ELECTRIC|\bWATER\b|INTERNET|TELEPHONE|COMMUNICATION|SECURITY|MESSENGER|PROFESSIONAL|CONSULT/.test(t))return 2;
+  if(/CAPITAL|EQUIPMENT|MACHINER|VEHICLE|FURNITURE|FIXTURE|COMPUTER|LAPTOP|BUILDING|IMPROVEMENT/.test(t))return 0;
+  if(/SUPPLIES|MATERIAL|GOODS|PURCHASE|\bFUEL\b|\bOIL\b|INVENTORY|MERCHANDISE|\bPARTS\b/.test(t))return 1;
+  return null;
+}
+const allAmtsEmpty=()=>[0,1,2,3,4].every(j=>!$('m'+j).value.trim());
 const DETAIL_IDS=['cls','vat','tin','branch','corp','last','first','mid','a1','a2','subtog'];
 const ORDER=['q','date','docType','docNo','part',null,'atc','remarks','add','cls','vat','tin','branch','corp','last','first','mid','a1','a2'];
 function syncTabs(){
@@ -1187,9 +1201,29 @@ function syncTabs(){
   $('subtog').tabIndex=known?0:-1;
   setUsual(usualK);
 }
-function setUsual(k){usualK=k;for(let j=0;j<5;j++){$('m'+j).tabIndex=j===k?(known?6:0):-1;$('m'+j).parentElement.classList.toggle('usual',j===k)}}
+// Old supplier: only the usual box is in the Tab order. New supplier: all five boxes are.
+function setUsual(k){usualK=k;for(let j=0;j<5;j++){$('m'+j).tabIndex=known?(j===k?6:-1):0;$('m'+j).parentElement.classList.toggle('usual',j===k)}}
 for(let j=0;j<5;j++)$('m'+j).addEventListener('keydown',e=>{
-  if(e.key==='Tab'){e.preventDefault();(e.shiftKey?$('part'):$('atc')).focus()}
+  // old supplier, or the box the nature pointed to: Tab goes straight on to ATC (Shift+Tab back to the nature). Other boxes of a new supplier use the normal order A to E.
+  if(e.key==='Tab'&&(known||j===usualK)){e.preventDefault();(e.shiftKey?$('part'):$('atc')).focus()}
+});
+// Any supplier: pick the amount box from the nature. It shows as the highlighted box, and Tab from the nature lands on it.
+// Priority: 1) document type without the word INVOICE -> E (does not qualify), 2) NVAT supplier -> Exempt (D), 3) the nature, 4) the supplier's learned box.
+const isNvat=()=>/nvat/i.test($('vat').value);
+const noInvoice=d=>{d=String(d||'').trim().toUpperCase();return d!==''&&!/INVOICE/.test(d)};
+// REPRESENTATION depends on the document type: SALES INVOICE -> B (goods); SERVICE INVOICE or any other invoice -> C (services).
+function natureBox(){
+  const n=optKey($('part').value),d=optKey($('docType').value);
+  if(/REPRESENTATION/.test(n))return /SALES\s+INVOICE/.test(d)?1:2;
+  return natCat(n);
+}
+function natureToBox(){const c=noInvoice($('docType').value)?4:isNvat()?3:natureBox(); if(c!==null&&c!==usualK)setUsual(c)}
+['input','change'].forEach(ev=>$('docType').addEventListener(ev,()=>{if(allAmtsEmpty())natureToBox()}));
+['input','change'].forEach(ev=>$('part').addEventListener(ev,natureToBox));
+$('part').addEventListener('keydown',e=>{
+  if(e.key!=='Tab'||e.shiftKey)return;
+  natureToBox();
+  e.preventDefault();$('m'+usualK).focus();
 });
 $('f').addEventListener('keydown',e=>{if(e.altKey&&/^Digit[1-5]$/.test(e.code)){e.preventDefault();const k=+e.code.slice(5)-1;setUsual(k);$('m'+k).focus()}});
 $('f').addEventListener('focusin',e=>{if(picked&&DETAIL_IDS.includes(e.target.id))detailsTouched=true;syncTabs()});
