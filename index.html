@@ -67,6 +67,7 @@ input.dd{padding-right:30px;background-image:url("data:image/svg+xml,%3Csvg xmln
 .list .del{flex:none;font-size:12px;line-height:1;padding:5px 8px;border:1px solid var(--line);border-radius:6px;color:var(--mute);background:transparent;cursor:pointer}
 .list .del:hover{color:#b3261e;border-color:#b3261e}
 .list .del.arm{background:#b3261e;border-color:#b3261e;color:#fff}
+.list .del.x{font-size:16px;line-height:1;padding:2px 9px}.list .del.x.arm{font-size:12px;padding:5px 8px}
 .calc{display:flex;flex-wrap:wrap;gap:8px 22px;padding:10px 12px;border-radius:8px;background:var(--head);font-variant-numeric:tabular-nums;align-items:baseline}
 .calc span{color:var(--mute);font-size:12px;margin-right:6px}.calc b{font-family:var(--mono);font-weight:600}
 .amts{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
@@ -90,6 +91,7 @@ tfoot td{font-weight:700;background:var(--head);border-bottom:0}
 #dupmsg{text-align:right;margin-top:-4px}#dupmsg:empty{display:none}
 .pill.flag{border-color:var(--warn);color:var(--warn);margin-left:8px}
 .bad-in{box-shadow:0 0 0 2px var(--bad)}
+.subbtns{display:flex;gap:8px;align-items:center}
 .subh{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .subh small{display:block;margin:2px 0 0}
 #subtog{white-space:nowrap}
@@ -235,7 +237,7 @@ body.locked #login{display:flex}
             <div class="c12 warn" id="dupmsg" role="status"></div>
           </div>
           <div class="sub">
-            <div class="subh"><span>Supplier details<small id="subsum">Filled in automatically for known suppliers. Check them for a new one.</small></span><button type="button" id="subtog" class="quiet" aria-expanded="true" aria-controls="subbody">Hide</button></div>
+            <div class="subh"><span>Supplier details<small id="subsum">Filled in automatically for known suppliers. Check them for a new one.</small></span><span class="subbtns"><button type="button" id="newsup" class="quiet" title="Save the details below as a separate supplier (for example a new branch of the same TIN)" hidden>Add as new supplier</button><button type="button" id="subtog" class="quiet" aria-expanded="true" aria-controls="subbody">Hide</button></span></div>
             <div id="subbody"><div class="grid">
               <label class="c3 combo">Classification<input id="cls" class="dd" autocomplete="off"><div class="list" id="clslist" hidden></div></label>
               <label class="c3 combo">VAT / NVAT<input id="vat" class="dd" autocomplete="off"><div class="list" id="vatlist" hidden></div></label>
@@ -799,7 +801,7 @@ function dropdown(id,listId,getOpts,tab,f){
     const ql=q.toLowerCase(),o=getOpts();
     const hit=!q?o:[...o.filter(x=>x.toLowerCase().startsWith(ql)),...o.filter(x=>!x.toLowerCase().startsWith(ql)&&x.toLowerCase().includes(ql))];
     const items=hit.map((x,i)=>f&&!BUILTIN_OPTS[f].includes(x)
-      ?{val:x,cls:'sup',html:`<span class="optv">${esc(x)}</span><span class="del${armed===x?' arm':''}" data-del="${i}" title="Take this out of the list">${armed===x?'Click again':'Remove'}</span>`}
+      ?{val:x,cls:'sup',html:`<span class="optv">${esc(x)}</span><span class="del x${armed===x?' arm':''}" data-del="${i}" title="Take this out of the list" aria-label="Remove ${esc(x)} from the list">${armed===x?'Click again':'×'}</span>`}
       :{val:x,html:`<span class="optv">${esc(x)}</span>`});
     // typed something that is not in the list: offer it as a new choice (it is remembered when the entry is added)
     if(f&&q.length>=2&&!o.some(x=>x.toLowerCase()===ql))items.push({val:optKey(q),html:`<span class="optv">${esc(optKey(q))}</span><small>Use as a new choice. It is remembered when you add the entry.</small>`});
@@ -829,6 +831,31 @@ function applySupplier(s,k){
   setSub(true);
   detailsTouched=false;syncTabs();$('date').focus();
 }
+// "Add as new supplier": keep the picked supplier as it is and save the details in the form as a separate supplier
+// (a new branch of the same TIN, or a different supplier that borrowed the first one's details)
+$('newsup').addEventListener('click',()=>{
+  const err=$('ferr'),v=id=>$(id).value.trim();
+  const nm=supName({corp:v('corp'),last:v('last'),first:v('first'),mid:v('mid')});
+  if(!nm){err.textContent='Enter the supplier name first.';setSub(true);return}
+  if(!checkCV(false)){setSub(true);return}
+  const cls=normCls(v('cls'))||(v('corp')?'CORPORATE':'INDIVIDUAL'),vat=normVat(v('vat'));
+  if(!vat){err.textContent='Choose VAT or NVAT for this supplier.';setSub(true);$('vat').classList.add('bad-in');$('vat').focus();return}
+  $('cls').value=cls;$('vat').value=vat;
+  const nt=normTin(v('tin')),branch=nt.tin?(normBranch(v('branch'))||nt.branch||'0000'):'';
+  const rec={cls,vat,tin:nt.tin,branch,corp:v('corp'),last:v('last'),first:v('first'),mid:v('mid'),a1:v('a1'),a2:v('a2')};
+  const key=resolve(supKey(rec));
+  if(suppliers.has(key)){const t=suppliers.get(key);err.textContent=`${supName(t)} is already saved with TIN ${t.tin||'-'} branch ${t.branch||'-'}. Pick it from the search box, or change the branch.`;setSub(true);$('branch').focus();return}
+  const t=ensureV({n:0,atcs:{},cats:{},v:{}});
+  for(const f of IDF)if(rec[f]){t.v[f]={[rec[f]]:1};t[f]=rec[f]}
+  for(const f of ['docType','part'])if(v(f))t.v[f]={[v(f)]:1};
+  if(v('atc'))t.atcs[v('atc')]=1;
+  if(rec.tin){t.tin=rec.tin;t.branch=rec.branch}
+  recompute(t);suppliers.set(key,t);
+  picked={key};detailsTouched=false;err.textContent='';
+  $('q').value=nm;persist();refreshStats();syncTabs();
+  snack('New supplier added',nm+(rec.tin?' · TIN '+rec.tin+'-'+rec.branch:''));
+  $('date').focus();
+});
 // known TIN typed in directly
 function tinLookup(){
   const n=normTin($('tin').value);
@@ -1199,6 +1226,7 @@ function syncTabs(){
   known=!!picked&&!detailsTouched;
   ORDER.forEach((id,i)=>{if(id)$(id).tabIndex=known?i+1:0});
   $('subtog').tabIndex=known?0:-1;
+  $('newsup').hidden=!picked;
   setUsual(usualK);
 }
 // Old supplier: only the usual box is in the Tab order. New supplier: all five boxes are.
